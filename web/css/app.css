@@ -47,6 +47,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .player { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px; min-height: 34px; }
 .player .name { font-weight: 700; }
 .player .name.turn::before { content: "● "; color: var(--accent); }
+.player .clock { direction: ltr; font-family: ui-monospace, monospace; font-size: 20px; font-weight: 700; padding: 4px 10px; border-radius: 8px; background: var(--panel); color: var(--muted); min-width: 76px; text-align: center; }
+.player .clock.active { background: #f0f0f0; color: #111; }
+.player .clock.low.active { background: var(--danger); color: #fff; }
+.player { gap: 8px; }
+.player .name { flex: 1; }
 .player .caps { direction: ltr; display: flex; align-items: center; gap: 0; }
 .player .caps svg { width: 18px; height: 18px; margin-left: -4px; }
 .player .caps em { font-style: normal; color: var(--muted); font-size: 13px; margin-left: 4px; }

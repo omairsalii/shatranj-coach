@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const Bridge = window.AndroidBridge;
 
 // ---------- الإعدادات ----------
-const DEFAULTS = { name: 'لاعب', sound: true, showEval: true, aiLevel: 3, coachLevel: 2, aiHints: true, coachComments: true };
+const DEFAULTS = { name: 'لاعب', sound: true, showEval: true, aiLevel: 3, coachLevel: 2, aiHints: true, coachComments: true, timeMin: 0, timeInc: 0 };
 let settings = { ...DEFAULTS };
 try { settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('chess-settings') || '{}') }; } catch { /* تجاهل */ }
 function saveSettings() { try { localStorage.setItem('chess-settings', JSON.stringify(settings)); } catch { /* تجاهل */ } }
@@ -102,6 +102,95 @@ function levelOptions(sel) {
 // ---------- حالة المباراة ----------
 let G = null;
 let gameToken = 0;
+
+// ---------- ساعة الشطرنج ----------
+const TIME_OPTIONS = [[0, 'بدون وقت'], [1, '1 د'], [3, '3 د'], [5, '5 د'], [10, '10 د'], [15, '15 د'], [30, '30 د']];
+const INC_OPTIONS = [[0, '+0 ث'], [2, '+2 ث'], [3, '+3 ث'], [5, '+5 ث'], [10, '+10 ث']];
+
+function timeFieldsHtml(min, inc) {
+  return `<label class="f">⏱️ وقت كل لاعب</label>${segHtml('tmin', TIME_OPTIONS, min)}
+    <label class="f">إضافة بعد كل نقلة</label>${segHtml('tinc', INC_OPTIONS, inc)}`;
+}
+function readTime(box) {
+  const min = +segVal(box, 'tmin') || 0;
+  const inc = +segVal(box, 'tinc') || 0;
+  settings.timeMin = min; settings.timeInc = inc;
+  return { min, inc };
+}
+
+function makeClock(tc) {
+  if (!tc || !tc.min) return null;
+  const base = tc.min * 60000;
+  return { min: tc.min, inc: tc.inc || 0, w: base, b: base, lastTs: null };
+}
+
+// الوقت المتبقي الآن للون معيّن (مع احتساب الوقت الجاري للطرف صاحب الدور).
+function clockLeft(color) {
+  const c = G.clock;
+  if (!c) return 0;
+  let t = c[color];
+  if (c.lastTs && !G.over && G.chess.turn() === color) t -= performance.now() - c.lastTs;
+  return Math.max(0, t);
+}
+
+// يُستدعى بعد كل نقلة: يخصم وقت صاحب النقلة ويضيف الزيادة ويبدأ ساعة الخصم.
+// الساعة تبدأ بعد أول نقلة للأبيض (مثل المواقع المعروفة).
+function clockAfterMove(color) {
+  const c = G.clock;
+  if (!c || G.over) return;
+  const now = performance.now();
+  if (c.lastTs) c[color] = Math.max(0, c[color] - (now - c.lastTs)) + c.inc * 1000;
+  c.lastTs = now;
+}
+
+function fmtClock(ms) {
+  const s = Math.ceil(ms / 1000);
+  if (ms < 10000) return (ms / 1000).toFixed(1);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function renderClocks() {
+  if (!G) return;
+  const top = board.orientation === 'w' ? 'b' : 'w';
+  for (const [el, c] of [[$('#playerTop .clock'), top], [$('#playerBottom .clock'), other(top)]]) {
+    if (!G.clock) { el.classList.add('hidden'); continue; }
+    const ms = clockLeft(c);
+    el.classList.remove('hidden');
+    el.textContent = fmtClock(ms);
+    el.classList.toggle('active', !G.over && !!G.clock.lastTs && G.chess.turn() === c);
+    el.classList.toggle('low', ms < 20000);
+  }
+}
+
+function hasMatingMaterial(color) {
+  const ps = [];
+  for (const row of G.chess.board()) for (const p of row) if (p && p.color === color && p.type !== 'k') ps.push(p.type);
+  if (!ps.length) return false;
+  return !(ps.length === 1 && (ps[0] === 'n' || ps[0] === 'b'));
+}
+
+function flag(color, remote = false) {
+  if (!G || G.over || !G.clock) return;
+  G.clock[color] = 0;
+  G.clock.lastTs = null;
+  if (G.mode === 'online' && !remote && G.net) G.net.send({ t: 'timeout', color });
+  const winner = other(color);
+  if (!hasMatingMaterial(winner)) endGame(`تعادل: انتهى وقت ${colorName(color)} لكن ${colorName(winner)} لا يملك مادة كافية للمات`, null);
+  else endGame(`انتهى وقت ${colorName(color)} ⏱️ — فاز ${colorName(winner)}`, winner);
+}
+
+setInterval(() => {
+  if (!G || !G.clock || G.over) return;
+  renderClocks();
+  const turn = G.chess.turn();
+  if (G.clock.lastTs && clockLeft(turn) <= 0) {
+    // في اللعب أونلاين يعلن كل جهاز انتهاء وقته هو، أو وقت الخصم بعد مهلة قصيرة لتعويض تأخر الشبكة.
+    if (G.mode === 'online' && turn !== G.myColor) {
+      if (performance.now() - G.clock.lastTs < G.clock[turn] + 3000) return;
+    }
+    flag(turn);
+  }
+}, 200);
 const board = new Board($('#board'), {
   onMove: (m) => onUserMove(m),
   canMove: (color) => canHumanMove(color),
@@ -137,6 +226,8 @@ function newGame(opts) {
     started: opts.mode !== 'online',
     hintCount: 0,
     viewing: false,
+    timeCtl: opts.timeCtl || null,
+    clock: makeClock(opts.timeCtl),
   };
   $('#coachFeed').innerHTML = '';
   $('#openingName').textContent = '';
@@ -144,7 +235,7 @@ function newGame(opts) {
   board.setMarks({});
   board.setOrientation(G.mode === 'local' ? 'w' : G.myColor);
   const titles = { ai: `ضد الكمبيوتر — ${LEVELS[G.level].name}`, coach: 'التدريب مع المدرب', online: 'مباراة مع صديق', local: 'لاعبان على جهاز واحد' };
-  $('#gameTitle').textContent = titles[G.mode];
+  $('#gameTitle').textContent = titles[G.mode] + (G.clock ? ` · ${G.clock.min}+${G.clock.inc}` : '');
   setupControls();
   show('game');
   update();
@@ -232,6 +323,7 @@ function update() {
     n.classList.toggle('turn', !G.over && turn === c);
     el.querySelector('.caps').innerHTML = capturedHtml(c);
   }
+  renderClocks();
   $('#evalBar').classList.toggle('flipped', board.orientation === 'b');
   renderMoves();
   let st = '';
@@ -323,6 +415,11 @@ function checkGameOver() {
 
 function endGame(text, winner) {
   if (G.over) return;
+  if (G.clock && G.clock.lastTs) {
+    const t = G.chess.turn();
+    G.clock[t] = clockLeft(t);
+    G.clock.lastTs = null;
+  }
   G.over = true;
   G.resultText = text;
   sound('end');
@@ -354,7 +451,8 @@ function onUserMove({ from, to, promotion }) {
   G.lastMove = { from, to };
   board.setArrows([]);
   playMoveSound(move);
-  if (G.mode === 'online') G.net.send({ t: 'move', uci, ply: G.chess.history().length - 1 });
+  clockAfterMove(move.color);
+  if (G.mode === 'online') G.net.send({ t: 'move', uci, ply: G.chess.history().length - 1, clock: G.clock && { w: G.clock.w, b: G.clock.b } });
   if (G.mode === 'coach') reviewUserMove(fenBefore, uci, G.chess.history().length - 1);
   afterPositionChange();
 }
@@ -419,6 +517,7 @@ function takeBackTo(ply, bestUci) {
   G.over = false;
   G.token = ++gameToken;
   G.aiThinking = false;
+  if (G.clock) G.clock.lastTs = G.chess.history().length ? performance.now() : null;
   const h = G.chess.history({ verbose: true });
   G.lastMove = h.length ? { from: h[h.length - 1].from, to: h[h.length - 1].to } : null;
   afterPositionChange();
@@ -438,7 +537,10 @@ async function aiMove(token) {
   const lvl = LEVELS[G.level];
   const lowLevel = G.level <= 1;
   const started = Date.now();
-  const res = await player().analyse(fen, { skill: lvl.skill, depth: lvl.depth, movetime: lvl.movetime * 3, multipv: lowLevel ? 4 : 1 });
+  let movetime = lvl.movetime * 3;
+  // مع الساعة: لا يستهلك الكمبيوتر أكثر من جزء صغير من وقته المتبقي.
+  if (G.clock) movetime = Math.max(100, Math.min(movetime, clockLeft(G.chess.turn()) / 30 + G.clock.inc * 500));
+  const res = await player().analyse(fen, { skill: lvl.skill, depth: lvl.depth, movetime, multipv: lowLevel ? 4 : 1 });
   const wait = Math.max(0, 450 - (Date.now() - started));
   if (wait) await sleep(wait);
   if (!G || G.token !== token || G.chess.fen() !== fen || G.over) return;
@@ -461,6 +563,7 @@ async function aiMove(token) {
   try { move = G.chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }); } catch { return; }
   G.lastMove = { from: move.from, to: move.to };
   playMoveSound(move);
+  clockAfterMove(move.color);
   if (G.mode === 'coach' && settings.coachComments) {
     const txt = Coach.explainOpponentMove(fen, uci);
     if (txt) coachSay(txt);
@@ -653,7 +756,8 @@ function setupOnline() {
     <label class="f">التلميحات</label>
     <label class="switch"><input type="checkbox" id="oMine" checked><span>تفعيل التلميحات لي أنا</span></label>
     <label class="switch" style="margin-top:8px"><input type="checkbox" id="oOpp"><span>السماح للخصم باستخدام التلميحات</span></label>
-    <p class="muted">يمكنك تغيير هذه الخيارات أثناء المباراة. التلميحات تظهر فقط على جهاز من يملكها.</p>
+    <p class="muted">يمكنك تغيير خيارات التلميحات أثناء المباراة. التلميحات تظهر فقط على جهاز من يملكها.</p>
+    ${timeFieldsHtml(settings.timeMin, settings.timeInc)}
     <button class="btn block" id="oCreate">إنشاء الغرفة ومشاركة الرابط</button>`);
   wireSegs(box);
   box.querySelector('#oCreate').onclick = () => {
@@ -664,16 +768,18 @@ function setupOnline() {
     const hintsMe = box.querySelector('#oMine').checked;
     const hintsOpp = box.querySelector('#oOpp').checked;
     closeModal();
-    hostOnline({ color, hintsMe, hintsOpp });
+    const timeCtl = readTime(box);
+    saveSettings();
+    hostOnline({ color, hintsMe, hintsOpp, timeCtl });
   };
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-async function hostOnline({ color, hintsMe, hintsOpp }) {
+async function hostOnline({ color, hintsMe, hintsOpp, timeCtl }) {
   const net = new OnlineGame({ onMessage: (m) => onNetMessage(m), onStatus: (s, t) => onNetStatus(s, t) });
   net.isHost = true;
-  newGame({ mode: 'online', myColor: color, hintsMe, hintsOpp, net });
+  newGame({ mode: 'online', myColor: color, hintsMe, hintsOpp, net, timeCtl });
   let code;
   try { code = await net.host(); } catch { return; }
   if (!G || G.net !== net) return;
@@ -722,6 +828,8 @@ function sendSetup() {
     hostName: settings.name,
     moves: G.chess.history({ verbose: true }).map((m) => m.from + m.to + (m.promotion || '')),
     over: G.over ? G.resultText : null,
+    timeCtl: G.timeCtl,
+    clock: G.clock && { w: clockLeft('w'), b: clockLeft('b') },
   });
 }
 
@@ -756,6 +864,13 @@ async function onNetMessage(msg) {
       G.myColor = other(msg.hostColor);
       G.hintsMe = !!msg.hintsGuest;
       loadMoves(msg.moves || []);
+      G.timeCtl = msg.timeCtl || null;
+      G.clock = makeClock(G.timeCtl);
+      if (G.clock && msg.clock) {
+        G.clock.w = msg.clock.w; G.clock.b = msg.clock.b;
+        G.clock.lastTs = G.chess.history().length && !msg.over ? performance.now() : null;
+      }
+      $('#gameTitle').textContent = 'مباراة مع صديق' + (G.clock ? ` · ${G.clock.min}+${G.clock.inc}` : '');
       if (!G.started) toast('تم الاتصال! المباراة بدأت');
       G.started = true;
       G.over = false;
@@ -777,9 +892,17 @@ async function onNetMessage(msg) {
       G.lastMove = { from: m.from, to: m.to };
       board.setArrows([]);
       playMoveSound(m);
+      if (G.clock) {
+        // نعتمد وقت الخصم كما حسبه جهازه، ونبدأ ساعتنا الآن.
+        if (msg.clock) { G.clock.w = msg.clock.w; G.clock.b = msg.clock.b; }
+        G.clock.lastTs = performance.now();
+      }
       afterPositionChange();
       break;
     }
+    case 'timeout':
+      if (msg.color === 'w' || msg.color === 'b') flag(msg.color, true);
+      break;
     case 'sync-request':
       if (net.isHost) sendSetup();
       break;
@@ -827,6 +950,7 @@ function startRematch() {
   G.lastMove = null;
   G.reviews = {};
   G.token = ++gameToken;
+  G.clock = makeClock(G.timeCtl);
   $('#coachFeed').innerHTML = '';
   board.setArrows([]);
   board.setOrientation(G.myColor);
@@ -856,17 +980,19 @@ function setupAi() {
   const box = openModal(`<h2>🤖 العب ضد الكمبيوتر</h2>
     <label class="f">المستوى</label><select id="aLevel">${levelOptions(settings.aiLevel)}</select>
     <label class="f">لونك</label>${segHtml('color', [['w', 'الأبيض'], ['b', 'الأسود'], ['r', 'عشوائي']], 'w')}
+    ${timeFieldsHtml(settings.timeMin, settings.timeInc)}
     <label class="switch" style="margin-top:12px"><input type="checkbox" id="aHints" ${settings.aiHints ? 'checked' : ''}><span>تفعيل التلميحات وشريط التقييم</span></label>
     <button class="btn block" id="aGo">ابدأ المباراة</button>`);
   wireSegs(box);
   box.querySelector('#aGo').onclick = () => {
     settings.aiLevel = +box.querySelector('#aLevel').value;
     settings.aiHints = box.querySelector('#aHints').checked;
+    const timeCtl = readTime(box);
     saveSettings();
     let color = segVal(box, 'color');
     if (color === 'r') color = Math.random() < 0.5 ? 'w' : 'b';
     closeModal();
-    newGame({ mode: 'ai', myColor: color, level: settings.aiLevel, hintsMe: settings.aiHints });
+    newGame({ mode: 'ai', myColor: color, level: settings.aiLevel, hintsMe: settings.aiHints, timeCtl });
   };
 }
 
@@ -875,15 +1001,31 @@ function setupCoach() {
     <p class="muted">تلعب ضد الكمبيوتر، والمدرب يقيّم كل نقلة لك، ويشرح بالعربية لماذا هي جيدة أو خاطئة، وما النقلة المفترض أن تلعبها ولماذا، ويحذرك من تهديدات الخصم.</p>
     <label class="f">مستوى الخصم</label><select id="cLevel">${levelOptions(settings.coachLevel)}</select>
     <label class="f">لونك</label>${segHtml('color', [['w', 'الأبيض'], ['b', 'الأسود']], 'w')}
+    ${timeFieldsHtml(0, 0)}
+    <p class="muted">ننصح بالتدريب بدون وقت حتى تقرأ شرح المدرب بهدوء.</p>
     <label class="switch" style="margin-top:12px"><input type="checkbox" id="cComments" ${settings.coachComments ? 'checked' : ''}><span>شرح نقلات الخصم وتهديداته</span></label>
     <button class="btn block" id="cGo">ابدأ التدريب</button>`);
   wireSegs(box);
   box.querySelector('#cGo').onclick = () => {
     settings.coachLevel = +box.querySelector('#cLevel').value;
     settings.coachComments = box.querySelector('#cComments').checked;
+    const timeCtl = { min: +segVal(box, 'tmin') || 0, inc: +segVal(box, 'tinc') || 0 };
     saveSettings();
     closeModal();
-    newGame({ mode: 'coach', myColor: segVal(box, 'color'), level: settings.coachLevel, hintsMe: true });
+    newGame({ mode: 'coach', myColor: segVal(box, 'color'), level: settings.coachLevel, hintsMe: true, timeCtl });
+  };
+}
+
+function setupLocal() {
+  const box = openModal(`<h2>👥 لاعبان على نفس الجهاز</h2>
+    ${timeFieldsHtml(settings.timeMin, settings.timeInc)}
+    <button class="btn block" id="lGo">ابدأ المباراة</button>`);
+  wireSegs(box);
+  box.querySelector('#lGo').onclick = () => {
+    const timeCtl = readTime(box);
+    saveSettings();
+    closeModal();
+    newGame({ mode: 'local', timeCtl });
   };
 }
 
@@ -1075,7 +1217,7 @@ document.addEventListener('click', (e) => {
     ai: setupAi,
     online: setupOnline,
     join: joinPrompt,
-    local: () => newGame({ mode: 'local' }),
+    local: setupLocal,
     lessons: openLessonsIndex,
     settings: openSettings,
     back: goBack,
@@ -1098,7 +1240,7 @@ async function goBack() {
     if (!(await confirmBox('هل تريد مغادرة المباراة؟'))) return true;
   }
   if (cur === 'game' && G && G.mode === 'online' && G.net) { G.net.close(); G.net = null; }
-  if (cur === 'game') { if (playerEngine) playerEngine.cancelAll(); gameToken++; if (G) G.token = gameToken; }
+  if (cur === 'game') { if (playerEngine) playerEngine.cancelAll(); gameToken++; if (G) { G.token = gameToken; G.clock = null; } }
   screenStack.pop();
   if (screenStack[screenStack.length - 1] === 'lesson') screenStack.pop();
   const prev = screenStack[screenStack.length - 1];
