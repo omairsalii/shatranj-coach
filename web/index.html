@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1f2a1f">
+<title>شطرنج المدرب</title>
+<link rel="icon" href="img/icon.svg">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- الشاشة الرئيسية -->
+<section id="home" class="screen active">
+  <header class="hero">
+    <div class="logo">♞</div>
+    <h1>شطرنج المدرب</h1>
+    <p>العب، تعلّم، وتحدَّ أصدقاءك — مع مدرب يشرح لك بالعربية</p>
+  </header>
+  <div class="menu">
+    <button class="card" data-action="coach"><span class="ic">🎓</span><b>التدريب مع المدرب</b><small>العب وسيشرح لك المدرب كل نقلة: لماذا هي جيدة أو خاطئة وما الأفضل</small></button>
+    <button class="card" data-action="ai"><span class="ic">🤖</span><b>العب ضد الكمبيوتر</b><small>10 مستويات من المبتدئ إلى البطل، مع تلميحات اختيارية</small></button>
+    <button class="card" data-action="online"><span class="ic">🔗</span><b>العب مع صديق برابط</b><small>أنشئ غرفة وشارك الرابط، وتحكم بالتلميحات لك ولخصمك</small></button>
+    <button class="card" data-action="join"><span class="ic">📥</span><b>انضم بدعوة</b><small>الصق رابط أو رمز الدعوة الذي أرسله صديقك</small></button>
+    <button class="card" data-action="lessons"><span class="ic">📚</span><b>الدروس والتكتيكات</b><small>الأساسيات، الاستراتيجية، التكتيكات مع ألغاز، والافتتاحات</small></button>
+    <button class="card" data-action="local"><span class="ic">👥</span><b>لاعبان على نفس الجهاز</b><small>مباراة ودية وجهاً لوجه</small></button>
+  </div>
+  <button class="link-btn" data-action="settings">⚙️ الإعدادات</button>
+</section>
+
+<!-- شاشة اللعب -->
+<section id="game" class="screen">
+  <div class="topbar">
+    <button class="icon-btn" data-action="back" aria-label="رجوع">→</button>
+    <div class="title" id="gameTitle">مباراة</div>
+    <div class="net" id="netStatus"></div>
+  </div>
+  <div class="player top" id="playerTop"><span class="name"></span><span class="caps"></span></div>
+  <div class="board-wrap">
+    <div class="evalbar" id="evalBar"><div class="fill"></div><span></span></div>
+    <div id="board"></div>
+  </div>
+  <div class="player bottom" id="playerBottom"><span class="name"></span><span class="caps"></span></div>
+  <div class="status" id="status"></div>
+  <div class="controls" id="controls">
+    <button data-action="hint" id="hintBtn">💡 تلميح</button>
+    <button data-action="plan" id="planBtn">🧭 ما الخطة؟</button>
+    <button data-action="undo" id="undoBtn">↩️ تراجع</button>
+    <button data-action="flip">🔄 قلب</button>
+    <button data-action="draw" id="drawBtn">🤝 تعادل</button>
+    <button data-action="resign" id="resignBtn">🏳️ استسلام</button>
+    <button data-action="gameMenu" id="menuBtn">⋯</button>
+  </div>
+  <div class="online-panel hidden" id="onlinePanel">
+    <label class="switch"><input type="checkbox" id="oppHintsToggle"><span>السماح للخصم باستخدام التلميحات</span></label>
+    <label class="switch"><input type="checkbox" id="myHintsToggle"><span>تفعيل التلميحات لي</span></label>
+  </div>
+  <div class="coach" id="coachPanel">
+    <div class="coach-head"><span>🎓 المدرب</span><span class="opening" id="openingName"></span></div>
+    <div class="coach-feed" id="coachFeed"></div>
+  </div>
+  <div class="moves" id="moveList" dir="ltr"></div>
+</section>
+
+<!-- الدروس -->
+<section id="lessons" class="screen">
+  <div class="topbar">
+    <button class="icon-btn" data-action="back" aria-label="رجوع">→</button>
+    <div class="title" id="lessonsTitle">الدروس</div>
+    <div></div>
+  </div>
+  <div id="lessonsBody" class="lessons-body"></div>
+</section>
+
+<!-- نافذة منبثقة عامة -->
+<div class="modal hidden" id="modal"><div class="modal-box" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="lib/peerjs.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

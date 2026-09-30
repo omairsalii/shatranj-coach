@@ -1,0 +1,78 @@
+name: Chess app (APK + web)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: chess-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Copy web app into Android assets
+        run: |
+          rm -rf android/app/src/main/assets/www
+          mkdir -p android/app/src/main/assets
+          cp -r web android/app/src/main/assets/www
+
+      - name: Build signed APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk shatranj-coach.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shatranj-coach-apk
+          path: shatranj-coach.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: chess-v1.0.${{ github.run_number }}
+          name: شطرنج المدرب 1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: 'true'
+          files: shatranj-coach.apk
+          body: |
+            تطبيق "شطرنج المدرب" لأندرويد.
+            حمّل الملف shatranj-coach.apk وثبّته على هاتفك (قد تحتاج للسماح بالتثبيت من مصادر غير معروفة).
+
+  # نسخة الويب (تُستخدم في روابط الدعوة لمن لا يملك التطبيق). تتطلب تفعيل GitHub Pages
+  # من إعدادات المستودع: Settings → Pages → Source: GitHub Actions.
+  pages:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deploy
+        uses: actions/deploy-pages@v4
